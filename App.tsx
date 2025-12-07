@@ -464,7 +464,7 @@ export default function App() {
               <li>Сгенерируйте токен.</li>
             </ol>
             <p className="mt-2 text-xs text-slate-500 bg-slate-100 p-2 rounded">
-               Совет: Если токен валиден, но каталогов 0 — убедитесь, что вы добавлены в каталог в Business Settings -> Data Sources -> Catalogs -> Assign People.
+               Совет: Если токен валиден, но каталогов 0 — убедитесь, что вы добавлены в каталог в Business Settings → Data Sources → Catalogs → Assign People.
             </p>
           </div>
         );
@@ -528,7 +528,7 @@ export default function App() {
             <p>Если API работает, но ссылка не открывается:</p>
             <ol className="list-decimal pl-5 space-y-2">
               <li><b>Business ID:</b> Проверьте поле "Business ID" в программе. Оно должно совпадать с ID вашей компании в Facebook. Вставьте полную ссылку на каталог в поле ID, чтобы извлечь его.</li>
-              <li><b>Нет прав в UI:</b> Зайдите в <a href="https://business.facebook.com/settings" target="_blank" className="underline text-blue-600">Настройки компании</a> -> Data Sources -> Catalogs. Найдите каталог и нажмите <b>"Add People"</b>, добавьте себя с полным доступом.</li>
+              <li><b>Нет прав в UI:</b> Зайдите в <a href="https://business.facebook.com/settings" target="_blank" className="underline text-blue-600">Настройки компании</a> → Data Sources → Catalogs. Найдите каталог и нажмите <b>"Add People"</b>, добавьте себя с полным доступом.</li>
             </ol>
           </div>
         );
