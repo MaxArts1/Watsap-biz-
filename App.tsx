@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProductItem, AppConfig, LogEntry, UploadStats, Catalog } from './types';
 import { MetaService } from './services/api';
@@ -43,19 +44,18 @@ const SAMPLE_JSON: ProductItem[] = [
   }
 ];
 
-type HelpTopic = 'token' | 'catalogId' | 'websiteUrl' | 'productsNotVisible' | 'permissionError' | null;
+type HelpTopic = 'token' | 'catalogId' | 'websiteUrl' | 'productsNotVisible' | 'permissionError' | 'guide' | null;
 
 export default function App() {
   // -- State --
-  const [config, setConfig] = useState<AppConfig>({ accessToken: '', catalogId: '', websiteUrl: '' });
+  const [config, setConfig] = useState<AppConfig>({ accessToken: '', catalogId: '', websiteUrl: '', businessId: '' });
   const [availableCatalogs, setAvailableCatalogs] = useState<Catalog[]>([]);
-  const [selectedBusinessId, setSelectedBusinessId] = useState<string | null>(null);
   
   const [items, setItems] = useState<ProductItem[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [stats, setStats] = useState<UploadStats>({ total: 0, processed: 0, success: 0, failed: 0 });
   const [status, setStatus] = useState<'idle' | 'validating' | 'ready' | 'uploading' | 'completed' | 'error'>('idle');
-  const [validationMsg, setValidationMsg] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [validationMsg, setValidationMsg] = useState<{ type: 'success' | 'error' | 'warning', text: string } | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -78,10 +78,9 @@ export default function App() {
   }, [config]);
 
   // -- Helpers --
-  const getCatalogUrl = (id: string, bizId?: string | null) => {
-    // New Meta Commerce Manager URL structure
-    let url = `https://business.facebook.com/commerce_manager/${id}/items`;
-    // Adding business_id is CRITICAL for permissions context
+  const getCatalogUrl = (id: string, bizId?: string) => {
+    // Structure: https://business.facebook.com/commerce/catalogs/{CATALOG_ID}/products?business_id={BUSINESS_ID}
+    let url = `https://business.facebook.com/commerce/catalogs/${id}/products`;
     if (bizId) {
       url += `?business_id=${bizId}`;
     }
@@ -130,6 +129,41 @@ export default function App() {
   // -- Handlers --
   const handleConfigChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    
+    // Smart Parsing for Catalog ID field: Check if user pasted a URL
+    if (name === 'catalogId' && (value.includes('http') || value.includes('facebook.com'))) {
+        // Try to extract IDs
+        try {
+            // Regex for .../catalogs/{ID}/...
+            const catMatch = value.match(/catalogs\/(\d+)/);
+            // Regex for ...business_id={ID}...
+            const bizMatch = value.match(/business_id=(\d+)/);
+
+            if (catMatch && catMatch[1]) {
+                const newCatalogId = catMatch[1];
+                const newBizId = bizMatch ? bizMatch[1] : config.businessId;
+                
+                setConfig(prev => ({ ...prev, catalogId: newCatalogId, businessId: newBizId || '' }));
+                setValidationMsg({ type: 'success', text: 'ID каталога и бизнеса извлечены из ссылки' });
+                return; // Stop here, we updated state
+            }
+        } catch (e) {
+            // Fall through to normal update if parsing fails
+        }
+    }
+
+    // Special Check for WhatsApp Links (wa.me) in Catalog ID
+    if (name === 'catalogId' && value.includes('wa.me')) {
+       // This is likely a shop link, not an ID
+       setValidationMsg({ type: 'warning', text: 'Это ссылка на витрину, а не ID каталога. ID должен состоять из цифр. Ссылка скопирована в поле "URL сайта".' });
+       
+       // Move it to websiteUrl if empty
+       if (!config.websiteUrl) {
+           setConfig(prev => ({ ...prev, websiteUrl: value }));
+       }
+       return; 
+    }
+
     setConfig(prev => ({ ...prev, [name]: value }));
     
     // If token changes, reset catalog list
@@ -138,13 +172,15 @@ export default function App() {
       setStatus('idle');
     }
 
-    // If catalog changes, try to find associated business ID for the link
+    // If catalog changes from dropdown, update business ID
     if (name === 'catalogId') {
        if (value === 'manual') {
-         setSelectedBusinessId(null);
+         // Do nothing, keep existing or clear
        } else {
          const selectedCat = availableCatalogs.find(c => c.id === value);
-         setSelectedBusinessId(selectedCat?.business_id || null);
+         if (selectedCat) {
+             setConfig(prev => ({ ...prev, catalogId: value, businessId: selectedCat.business_id || '' }));
+         }
        }
     }
 
@@ -167,7 +203,8 @@ export default function App() {
       // 1. Validate Token
       const user = await MetaService.validateToken(config.accessToken);
       // Only log on manual check to avoid spam
-      if (manualCheck) addLog('success', `Токен действителен. User ID: ${user.id}`);
+      // SHOW USER NAME to help user identify account
+      if (manualCheck) addLog('success', `Токен действителен. Пользователь: ${user.name || 'Unknown'} (ID: ${user.id})`);
 
       // 2. Fetch Catalogs (Auto-discovery)
       const catalogs = await MetaService.getUserCatalogs(config.accessToken);
@@ -176,10 +213,12 @@ export default function App() {
       if (catalogs.length > 0) {
         if (manualCheck) addLog('info', `Найдено каталогов: ${catalogs.length}`);
         
-        // If current config.catalogId exists in the list, update selectedBusinessId
+        // If current config.catalogId exists in the list, update businessId
         if (config.catalogId && config.catalogId !== 'manual') {
             const currentCat = catalogs.find(c => c.id === config.catalogId);
-            if (currentCat) setSelectedBusinessId(currentCat.business_id || null);
+            if (currentCat && currentCat.business_id) {
+                setConfig(prev => ({...prev, businessId: currentCat.business_id}));
+            }
         }
 
       } else {
@@ -188,9 +227,9 @@ export default function App() {
 
       // 3. Validate Specific Catalog if ID is present
       if (config.catalogId) {
-        // Smart Check for non-numeric IDs (like URLs)
+        // Smart Check for non-numeric IDs (like URLs) - But now we allow URL paste in handler, so here we check cleaned value
         if (/[^0-9]/.test(config.catalogId) && config.catalogId !== 'manual') {
-             const errorMsg = 'ID каталога должен содержать только цифры. Не вставляйте ссылки (wa.me или facebook.com).';
+             const errorMsg = 'ID каталога должен содержать только цифры. Если вы вставляете ссылку, убедитесь, что она правильная.';
              setValidationMsg({ type: 'error', text: errorMsg });
              if (manualCheck) addLog('error', 'Неверный формат ID', errorMsg);
              setStatus('error');
@@ -376,6 +415,43 @@ export default function App() {
     let content = null;
 
     switch (helpTopic) {
+      case 'guide':
+        title = "Инструкция по настройке";
+        content = (
+          <div className="space-y-4 text-sm text-slate-600">
+             <div className="p-3 bg-blue-50 text-blue-800 rounded mb-2">
+               Вам понадобится доступ к Meta (Facebook) Business Manager.
+             </div>
+             <ol className="list-decimal pl-5 space-y-3">
+               <li>
+                 <b>Получите Access Token:</b>
+                 <ul className="list-disc pl-4 mt-1 text-slate-500">
+                   <li>Откройте <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer" className="text-wa-dark underline">Graph API Explorer</a></li>
+                   <li>Выберите ваше приложение.</li>
+                   <li>В разделе Permissions добавьте: <code>catalog_management</code>.</li>
+                   <li>Нажмите "Generate Access Token" и скопируйте его.</li>
+                 </ul>
+               </li>
+               <li>
+                 <b>Подключите каталог:</b>
+                 <ul className="list-disc pl-4 mt-1 text-slate-500">
+                   <li>Вставьте токен в программу.</li>
+                   <li>Нажмите 🔍.</li>
+                   <li>Выберите каталог из списка.</li>
+                 </ul>
+               </li>
+               <li>
+                 <b>Загрузите товары:</b>
+                 <ul className="list-disc pl-4 mt-1 text-slate-500">
+                   <li>Скачайте образец JSON.</li>
+                   <li>Заполните его вашими товарами.</li>
+                   <li>Перетащите файл сюда и нажмите "Начать".</li>
+                 </ul>
+               </li>
+             </ol>
+          </div>
+        );
+        break;
       case 'token':
         title = "Где найти Access Token?";
         content = (
@@ -400,7 +476,8 @@ export default function App() {
             <p>Способы:</p>
             <ol className="list-decimal pl-5 space-y-2">
               <li><b>Автоматически (Рекомендуется):</b> Введите токен и нажмите кнопку 🔍. Выберите каталог из списка.</li>
-              <li><b>Вручную:</b> Найдите ID в Commerce Manager. Это длинный набор цифр.</li>
+              <li><b>Вручную:</b> Выберите "Ввести вручную" и вставьте ID.</li>
+              <li><b>Вставка ссылки:</b> Вы можете вставить полную ссылку на каталог (business.facebook.com/...) в поле ID, и программа сама извлечет цифры.</li>
             </ol>
             <div className="bg-red-50 border border-red-100 p-2 rounded text-red-800 text-xs mt-2">
                Не используйте ссылки вида <code>wa.me/c/...</code> — это ссылки для клиентов, а не ID для загрузки.
@@ -450,7 +527,7 @@ export default function App() {
             </div>
             <p>Если API работает, но ссылка не открывается:</p>
             <ol className="list-decimal pl-5 space-y-2">
-              <li><b>Выбрана не та компания:</b> Наша программа пытается добавить <code>?business_id=...</code> в ссылку. Попробуйте выбрать каталог из списка заново.</li>
+              <li><b>Business ID:</b> Проверьте поле "Business ID" в программе. Оно должно совпадать с ID вашей компании в Facebook. Вставьте полную ссылку на каталог в поле ID, чтобы извлечь его.</li>
               <li><b>Нет прав в UI:</b> Зайдите в <a href="https://business.facebook.com/settings" target="_blank" className="underline text-blue-600">Настройки компании</a> -> Data Sources -> Catalogs. Найдите каталог и нажмите <b>"Add People"</b>, добавьте себя с полным доступом.</li>
             </ol>
           </div>
@@ -477,39 +554,35 @@ export default function App() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="flex flex-col min-h-screen bg-slate-50">
       {renderHelpModal()}
       
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0">
+      <header className="bg-white border-b border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between shadow-sm shrink-0 gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-wa rounded-lg flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-wa/30">
             WA
           </div>
           <div>
-            <h1 className="text-xl font-bold text-slate-800 tracking-tight">Загрузчик Каталога WhatsApp</h1>
-            <p className="text-xs text-slate-500 font-medium">Meta Commerce Batch API (v20.0)</p>
+            <h1 className="text-xl font-bold text-slate-800 tracking-tight leading-none">Загрузчик</h1>
+            <p className="text-xs text-slate-500 font-medium">WhatsApp Catalog Uploader</p>
           </div>
         </div>
-        <div className="flex gap-3 items-center">
-          <button onClick={() => setHelpTopic('productsNotVisible')} className="text-sm text-slate-600 hover:text-wa font-medium hidden md:block">
-            Где мои товары?
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => setHelpTopic('guide')} className="text-sm bg-wa/10 text-wa-dark px-3 py-1.5 rounded-full font-medium hover:bg-wa/20 transition-colors">
+            Как настроить?
           </button>
-          <div className="h-4 w-px bg-slate-300 hidden md:block"></div>
-          <button onClick={downloadSample} className="text-sm text-wa-dark hover:text-wa font-medium flex items-center gap-1 transition-colors">
-            <DownloadIcon className="w-4 h-4" /> Скачать образец
+          <button onClick={downloadSample} className="text-sm text-slate-600 border border-slate-200 px-3 py-1.5 rounded-full hover:bg-slate-50 flex items-center gap-1 transition-colors">
+            <DownloadIcon className="w-4 h-4" /> Образец
           </button>
-          <a href="https://developers.facebook.com/docs/commerce-platform/catalog/batch-api" target="_blank" rel="noreferrer" className="text-sm text-slate-500 hover:text-slate-800 transition-colors">
-            Docs ↗
-          </a>
         </div>
       </header>
 
       {/* Main Content Grid */}
-      <main className="flex-1 overflow-hidden flex flex-col md:flex-row">
+      <main className="flex-1 flex flex-col md:flex-row">
         
         {/* Left Panel: Configuration & Input */}
-        <div className="w-full md:w-1/3 lg:w-[400px] bg-white border-r border-slate-200 flex flex-col overflow-y-auto custom-scrollbar shrink-0 z-10">
+        <div className="w-full md:w-1/3 lg:w-[400px] bg-white border-r border-slate-200 flex flex-col shrink-0 z-10 shadow-lg md:shadow-none">
           <div className="p-6 space-y-6">
             
             {/* Credentials Form */}
@@ -574,17 +647,32 @@ export default function App() {
                     value={config.catalogId === 'manual' ? '' : config.catalogId}
                     onChange={handleConfigChange}
                     className="w-full rounded-md border-slate-300 bg-slate-50 border px-3 py-2 text-sm focus:border-wa focus:ring-1 focus:ring-wa transition-all outline-none"
-                    placeholder="Введите ID каталога (только цифры)"
+                    placeholder="ID каталога или ссылка..."
                   />
                 )}
                 
+                {/* Business ID Input (Hidden if not needed, but good for troubleshooting) */}
+                <div className="mt-2">
+                   <div className="flex justify-between items-center mb-1">
+                     <label className="block text-xs text-slate-500">Business ID (Компании)</label>
+                     <button onClick={() => setHelpTopic('permissionError')} className="text-xs text-slate-400 underline">Зачем?</button>
+                   </div>
+                   <input
+                    type="text"
+                    name="businessId"
+                    value={config.businessId || ''}
+                    onChange={handleConfigChange}
+                    className="w-full rounded-md border-slate-200 bg-slate-50 border px-2 py-1.5 text-xs text-slate-600 focus:border-wa focus:ring-1 focus:ring-wa transition-all outline-none"
+                    placeholder="Опционально (для ссылки)"
+                  />
+                </div>
+
                 {config.catalogId && config.catalogId !== 'manual' && config.catalogId.length > 5 && (
                   <div className="flex items-center gap-2 mt-2">
-                     <a href={getCatalogUrl(config.catalogId, selectedBusinessId)} target="_blank" rel="noreferrer" className="text-xs text-wa-dark inline-flex items-center hover:underline group">
+                     <a href={getCatalogUrl(config.catalogId, config.businessId)} target="_blank" rel="noreferrer" className="text-xs text-wa-dark inline-flex items-center hover:underline group">
                         <ExternalLinkIcon className="w-3 h-3 mr-1 text-wa-dark group-hover:text-wa"/> 
                         Открыть в Commerce Manager
                      </a>
-                     <button onClick={() => setHelpTopic('permissionError')} className="text-[10px] text-red-400 underline hover:text-red-600">Ошибка доступа?</button>
                   </div>
                 )}
               </div>
@@ -608,7 +696,9 @@ export default function App() {
 
               {validationMsg && (
                 <div className={`text-xs p-3 rounded-md flex items-start gap-2 ${
-                  validationMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+                  validationMsg.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 
+                  validationMsg.type === 'warning' ? 'bg-yellow-50 text-yellow-700 border border-yellow-200' :
+                  'bg-red-50 text-red-700 border border-red-200'
                 }`}>
                   <div className="mt-0.5 shrink-0">
                     {validationMsg.type === 'success' ? <CheckCircleIcon className="w-4 h-4" /> : <AlertCircleIcon className="w-4 h-4" />}
@@ -667,7 +757,7 @@ export default function App() {
             </div>
 
             {/* Action Button */}
-            <div className="pt-2">
+            <div className="pt-2 pb-6 md:pb-0">
               <button
                 onClick={startUpload}
                 disabled={status === 'uploading' || items.length === 0}
@@ -693,7 +783,7 @@ export default function App() {
         </div>
 
         {/* Right Panel: Logs */}
-        <div className="flex-1 bg-slate-50 flex flex-col overflow-hidden">
+        <div className="flex-1 bg-slate-50 flex flex-col min-h-[300px]">
           
           {/* Stats Bar */}
           <div className="bg-white border-b border-slate-200 p-6 grid grid-cols-2 md:grid-cols-4 gap-4 shadow-sm z-10">
@@ -714,13 +804,13 @@ export default function App() {
           )}
 
           {/* Logs Table */}
-          <div className="flex-1 overflow-auto p-6 custom-scrollbar">
+          <div className="flex-1 p-4 md:p-6 custom-scrollbar">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-slate-800">Журнал событий</h3>
               <div className="flex gap-2">
                 {config.catalogId && config.catalogId !== 'manual' && config.catalogId.length > 5 && (
                   <a 
-                    href={getCatalogUrl(config.catalogId, selectedBusinessId)} 
+                    href={getCatalogUrl(config.catalogId, config.businessId)} 
                     target="_blank" 
                     rel="noreferrer" 
                     className="text-xs bg-white border border-slate-300 text-wa-dark hover:text-wa hover:border-wa px-3 py-1.5 rounded font-medium transition-all flex items-center gap-1"
@@ -743,8 +833,8 @@ export default function App() {
                     <tr>
                       <th className="px-4 py-3 font-medium w-24">Время</th>
                       <th className="px-4 py-3 font-medium w-24">Тип</th>
-                      <th className="px-4 py-3 font-medium">Сообщение</th>
-                      <th className="px-4 py-3 font-medium w-1/3">Детали</th>
+                      <th className="px-4 py-3 font-medium min-w-[200px]">Сообщение</th>
+                      <th className="px-4 py-3 font-medium min-w-[200px]">Детали</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">

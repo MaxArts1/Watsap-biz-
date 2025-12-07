@@ -1,3 +1,4 @@
+
 export interface ProductItem {
   retailer_id: string;
   name: string;
@@ -15,6 +16,7 @@ export interface ProductItem {
 export interface AppConfig {
   accessToken: string;
   catalogId: string;
+  businessId?: string;
   websiteUrl: string;
 }
 
