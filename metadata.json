@@ -1,0 +1,5 @@
+{
+  "name": "WhatsApp Catalog Uploader",
+  "description": "A professional tool to batch upload products to WhatsApp Business Catalogs via Meta Graph API with validation, rate-limit handling, and reporting.",
+  "requestFramePermissions": []
+}
